@@ -1,0 +1,12 @@
+# Install torch from the CUDA 12.8 wheel index for RTX 5090 (sm_120):
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128
+# then: pip install -r requirements.txt
+torch
+open_clip_torch
+transformers
+pillow
+numpy
+tqdm
+matplotlib
+pytest
+python-dotenv
