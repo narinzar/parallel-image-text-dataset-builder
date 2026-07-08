@@ -39,21 +39,35 @@ SCENES = ["sky", "field", "ocean", "desert", "forest", "city", "cavern", "dune"]
 
 
 def _make_base_image(rng: np.random.Generator, size: int = 128) -> Image.Image:
-    """Build a deterministic-looking but varied RGB image from numpy."""
+    """Build a varied RGB image as a sum of random low-frequency plane waves.
+
+    A handful of sinusoids with random frequency, orientation, and phase gives
+    each base image a distinctive low-frequency luminance structure. Low
+    frequencies survive resize + JPEG recompression, so a planted near-duplicate
+    hashes close to its base, while different draws land far apart in dhash space
+    (no accidental collisions at a few-thousand-image scale).
+    """
     ys = np.linspace(0, 1, size, dtype=np.float32)[:, None]
     xs = np.linspace(0, 1, size, dtype=np.float32)[None, :]
 
-    r = (0.5 + 0.5 * np.sin(6.0 * xs + rng.uniform(0, 6)))
-    g = (0.5 + 0.5 * np.cos(6.0 * ys + rng.uniform(0, 6)))
-    b = (0.5 + 0.5 * np.sin(4.0 * (xs + ys) + rng.uniform(0, 6)))
-    arr = np.stack([r, g, b], axis=-1)
+    lum = np.zeros((size, size), dtype=np.float32)
+    for _ in range(4):
+        fx = rng.uniform(-3.5, 3.5)
+        fy = rng.uniform(-3.5, 3.5)
+        phase = rng.uniform(0.0, 2.0 * np.pi)
+        lum += np.sin(2.0 * np.pi * (fx * xs + fy * ys) + phase)
+    lum = (lum - lum.min()) / (np.ptp(lum) + 1e-6)
 
     # Add a bright blob so images are visually distinct and not pure gradients.
     cx, cy = rng.uniform(0.2, 0.8), rng.uniform(0.2, 0.8)
     radius = rng.uniform(0.1, 0.3)
     dist = np.sqrt((xs - cx) ** 2 + (ys - cy) ** 2)
-    blob = np.clip(1.0 - dist / radius, 0.0, 1.0)[..., None]
-    arr = np.clip(arr + 0.5 * blob, 0.0, 1.0)
+    blob = np.clip(1.0 - dist / radius, 0.0, 1.0)
+    lum = np.clip(lum + 0.5 * blob, 0.0, 1.0)
+
+    # Colorize with a per-image tint so channels differ but track luminance.
+    tint = rng.uniform(0.2, 1.0, size=3).astype(np.float32)
+    arr = np.clip(lum[..., None] * tint[None, None, :], 0.0, 1.0)
 
     return Image.fromarray((arr * 255).astype(np.uint8), mode="RGB")
 

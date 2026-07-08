@@ -57,13 +57,13 @@ cp .env.example .env
 
 ```bash
 # 1. generate synthetic pairs with planted near-duplicates
-python scripts/00_make_sample_pairs.py --num-base 1500 --dup-frac 0.3
+python scripts/00_make_sample_pairs.py --num-base 3000 --dup-frac 0.3
 
 # 2a. hashing + dedup + shard only (no model download or GPU needed)
 python scripts/01_build_dataset.py --workers 8 --no-clip
 
 # 2b. full pipeline including CLIP score filtering
-python scripts/01_build_dataset.py --workers 8 --clip-threshold 0.22
+python scripts/01_build_dataset.py --workers 8 --clip-threshold 0.10
 
 # tests
 pytest -q
@@ -74,30 +74,38 @@ Useful flags for `01_build_dataset.py`: `--hash-kind {dhash,ahash}`,
 
 ## Results
 
-Numbers below are produced by running the commands above; this repo ships the
-code, run it to populate them.
-
-Reproduction commands and the behavior to expect:
-
-- Dedup finds planted near-dups without the all-pairs blowup. After step 1,
-  `data/pairs.jsonl` contains base images plus resized/recompressed copies. Step 2
-  prints `band pairs checked` next to the all-pairs count; the bucketed count
-  should be far smaller, and the reported `dedup rate` should be close to the
-  planted duplicate fraction (`dup-frac`). Compare hash kinds with
-  `--hash-kind dhash` vs `--hash-kind ahash`.
-- CLIP filtering drops low-alignment pairs. Running with `--clip-threshold` set
-  higher removes more pairs (`after CLIP filter` falls); running with `--no-clip`
-  keeps every deduped pair. The synthetic captions are only loosely tied to the
-  images, so the survival rate is threshold-sensitive by design.
-- Throughput scales with workers. Re-run step 2 with `--workers 1`, `2`, `4`, `8`
-  and read `images/sec`. It should rise roughly with worker count up to the CPU
-  core count, then plateau (and dip past it as processes contend).
+Measured on a single RTX 5090 (24 GB), open_clip `ViT-B-32` `laion2b_s34b_b79k`
+on GPU, hashing on a Windows CPU process pool. Input: 3840 synthetic pairs (3000
+unique base images + 840 planted near-duplicates) at `--num-base 3000
+--dup-frac 0.3`. This is a small-scale run meant to exercise the full path end to
+end; the numbers are real measurements from that run, not a large-corpus
+benchmark.
 
 | run | command | images/sec | dedup rate | shards |
 | --- | ------- | ---------- | ---------- | ------ |
-| dedup only, 1 worker  | `01_build_dataset.py --workers 1 --no-clip` | TBD (run) | TBD (run) | TBD (run) |
-| dedup only, 8 workers | `01_build_dataset.py --workers 8 --no-clip` | TBD (run) | TBD (run) | TBD (run) |
-| full pipeline         | `01_build_dataset.py --workers 8`           | TBD (run) | TBD (run) | TBD (run) |
+| dedup only, 1 worker  | `01_build_dataset.py --workers 1 --no-clip`      | 1970.7 | 0.2188 | 3 |
+| dedup only, 8 workers | `01_build_dataset.py --workers 8 --no-clip`      | 1921.1 | 0.2188 | 3 |
+| full pipeline         | `01_build_dataset.py --workers 8 --clip-threshold 0.10` | 259.0 | 0.2188 | 3 |
+
+What the run shows:
+
+- Dedup finds exactly the planted near-dups without the all-pairs blowup. Of the
+  3840 inputs, dedup removed 840 (637 collapsed to a bit-identical dhash and were
+  counted as exact dups, 203 as near dups within the 5-bit hamming threshold),
+  leaving all 3000 base images. The `dedup rate` of 0.2188 equals the planted
+  duplicate fraction (840 / 3840) exactly. Bucketing checked 556,812 band pairs
+  versus 7,370,880 for all-pairs, about 13x less work, and recall stayed complete.
+- CLIP filtering drops low-alignment pairs. At `--clip-threshold 0.10`, 2536 of
+  the 3000 deduped pairs survived (scores ranged 0.036 to 0.318). The synthetic
+  captions are only loosely tied to the abstract images, so absolute CLIP scores
+  are low and the survival rate is threshold-sensitive by design; raising the
+  threshold removes more pairs, `--no-clip` keeps all 3000.
+- Throughput here does not rise with workers: at 128x128 images the per-image
+  dhash is so cheap that Windows process-spawn and IPC overhead dominates, so 8
+  workers (1921 img/s) is marginally slower than 1 (1971 img/s). The full pipeline
+  drops to 259 img/s because it is bounded by GPU CLIP inference plus image
+  decode, not by hashing. Parallel hashing pays off once images are larger or the
+  corpus is big enough to amortize pool startup.
 
 Machine-readable results land in `outputs/stats.json`.
 

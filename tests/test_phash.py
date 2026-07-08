@@ -12,13 +12,19 @@ from src.phash import HASH_BITS, ahash, dhash, hamming_distance
 
 
 def _make_image(seed: int, size: int = 128) -> Image.Image:
+    """Sum of random low-frequency plane waves: distinctive but resize-stable."""
     rng = np.random.default_rng(seed)
     ys = np.linspace(0, 1, size)[:, None]
     xs = np.linspace(0, 1, size)[None, :]
-    r = 0.5 + 0.5 * np.sin(6 * xs + rng.uniform(0, 6))
-    g = 0.5 + 0.5 * np.cos(6 * ys + rng.uniform(0, 6))
-    b = 0.5 + 0.5 * np.sin(4 * (xs + ys) + rng.uniform(0, 6))
-    arr = np.clip(np.stack([r, g, b], axis=-1), 0, 1)
+    lum = np.zeros((size, size))
+    for _ in range(4):
+        fx = rng.uniform(-3.5, 3.5)
+        fy = rng.uniform(-3.5, 3.5)
+        phase = rng.uniform(0, 2 * np.pi)
+        lum += np.sin(2 * np.pi * (fx * xs + fy * ys) + phase)
+    lum = (lum - lum.min()) / (np.ptp(lum) + 1e-6)
+    tint = rng.uniform(0.2, 1.0, size=3)
+    arr = np.clip(lum[..., None] * tint[None, None, :], 0, 1)
     return Image.fromarray((arr * 255).astype(np.uint8), "RGB")
 
 
